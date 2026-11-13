@@ -41,15 +41,19 @@ jobs:
         env:
           API_URL: ${{ secrets.DB_MONITOR_API_URL }}
           API_TOKEN: ${{ secrets.DB_MONITOR_API_TOKEN }}
+          GITHUB_REPO: ${{ github.repository }}
         run: |
           python - <<'EOF'
           import json
           import os
           import subprocess
+          import urllib.request
           from datetime import datetime
+          from pathlib import Path
           
           api_url = os.environ['API_URL'].rstrip('/')
           api_token = os.environ['API_TOKEN']
+          github_repo = os.environ['GITHUB_REPO']
           
           # Construct the base API URL (remove /items if present)
           if api_url.endswith('/items'):
@@ -117,7 +121,37 @@ jobs:
           
           print(f"\nFound {len(new_notices)} new notice(s) to sync...")
           
-          # Step 4: Push new notices to Redis
+          # Step 4: Download PDFs for new notices
+          attachments_dir = Path('data/attachments')
+          attachments_dir.mkdir(parents=True, exist_ok=True)
+          
+          downloaded_files = []
+          
+          for notice in new_notices:
+              url = notice.get('url', '')
+              if not url or 'noticeid=' in url:  # Skip if no URL or if it's a notice page link
+                  continue
+              
+              # Check if it's a PDF or document
+              if any(ext in url.lower() for ext in ['.pdf', '.doc', '.docx', '.xls', '.xlsx']):
+                  filename = notice.get('file')
+                  if filename:
+                      file_path = attachments_dir / filename
+                      
+                      # Only download if file doesn't exist
+                      if not file_path.exists():
+                          try:
+                              print(f"  Downloading: {filename}...")
+                              urllib.request.urlretrieve(url, file_path)
+                              downloaded_files.append(filename)
+                              print(f"  ✓ Saved: {filename}")
+                          except Exception as e:
+                              print(f"  ✗ Failed to download {filename}: {e}")
+          
+          if downloaded_files:
+              print(f"\n✓ Downloaded {len(downloaded_files)} attachment(s)")
+          
+          # Step 5: Push new notices to Redis with GitHub raw URLs
           success_count = 0
           fail_count = 0
           
@@ -130,11 +164,19 @@ jobs:
               # Clean up the title (remove "Download" suffix if present)
               title = notice['title'].replace('Download', '').strip()
               
+              # Determine the URL to use
+              document_url = notice.get('url', '')
+              filename = notice.get('file')
+              
+              # If we have a file, use GitHub raw URL instead of TECMIS URL
+              if filename and (attachments_dir / filename).exists():
+                  document_url = f"https://raw.githubusercontent.com/{github_repo}/main/data/attachments/{filename}"
+              
               # Format the body with notice details
               body = f"## {title}\n\n"
               body += f"**Posted:** {notice['posted_at']}\n\n"
-              if notice['url']:
-                  body += f"[View/Download]({notice['url']})"
+              if document_url:
+                  body += f"[View/Download]({document_url})"
               
               payload = {
                   "id": item_id,
@@ -175,3 +217,17 @@ jobs:
           if fail_count > 0 and success_count == 0:
               exit(1)
           EOF
+
+      - name: Commit and push attachments
+        if: steps.check_config.outputs.configured == 'true'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/attachments/
+          if git diff --staged --quiet; then
+            echo "No new attachments to commit."
+          else
+            git commit -m "chore: add TECMIS notice attachments ($(date -u '+%Y-%m-%d %H:%M UTC'))"
+            git push
+            echo "✓ Pushed attachments to GitHub"
+          fi

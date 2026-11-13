@@ -1,11 +1,15 @@
 # Local secrets - never commit
 .env
 
-# Scraped data lives in git (that is the point of the repo), but keep local
-# attachment downloads out unless you actually want them tracked:
-data/attachments/
+# Scraped data lives in git (that is the point of the repo)
+# Attachments are now committed to GitHub for direct linking
+# data/attachments/
 
 __pycache__/
 *.pyc
 .venv/
 venv/
+
+# Test and debug files
+debug_response.html
+test_login.py
