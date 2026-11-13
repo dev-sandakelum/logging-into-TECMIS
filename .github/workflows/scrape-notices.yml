@@ -1,0 +1,52 @@
+name: Scrape TECMIS Notices
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # every 6 hours (UTC)
+  workflow_dispatch:        # manual trigger from the Actions tab
+
+permissions:
+  contents: write           # required to push commits back to the repo
+
+concurrency:
+  group: scrape-tecmis
+  cancel-in-progress: false # never let two runs collide
+
+jobs:
+  scrape-and-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run scraper
+        env:
+          TECMIS_USER: ${{ secrets.TECMIS_USER }}
+          TECMIS_PASS: ${{ secrets.TECMIS_PASS }}
+          # Set IGNORE_SSL_ERRORS=1 only if the university certificate
+          # expires again; it is NOT needed normally.
+          # IGNORE_SSL_ERRORS: ${{ vars.IGNORE_SSL_ERRORS }}
+          # Download every attachment into data/attachments/:
+          # DOWNLOAD_PDFS: '1'
+        run: python scrape.py
+
+      - name: Commit and push if changed
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/notices.json NOTICES.md
+          if git diff --staged --quiet; then
+            echo "No changes - nothing to commit."
+          else
+            git commit -m "chore: update TECMIS notices ($(date -u '+%Y-%m-%d %H:%M UTC'))"
+            git push
+          fi
