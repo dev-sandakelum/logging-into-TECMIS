@@ -19,8 +19,11 @@ workflow**), a GitHub Actions workflow:
    *Previous Notices* — with number, posted date/time, title and download link.
 4. Writes `data/notices.json` (canonical data) and `NOTICES.md` (readable
    table) and commits them only if something actually changed.
-5. **NEW:** If notices changed and Redis API secrets are configured, automatically
-   pushes the 5 most recent notices to your DB Monitor API for real-time notifications.
+5. **Redis Sync (optional):** If notices changed and Redis API secrets are configured:
+   - Downloads PDF/document attachments for new notices
+   - Commits attachments to `data/attachments/` folder in GitHub
+   - Pushes the 5 most recent notices to your DB Monitor API
+   - Uses GitHub raw URLs for attachments (fast, reliable CDN delivery)
 
 The scraper uses plain HTTPS requests + BeautifulSoup (no headless browser):
 the TECMIS pages are server-rendered PHP, so login is a simple form POST and
