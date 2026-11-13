@@ -85,6 +85,7 @@ jobs:
           import os
           import subprocess
           import urllib.request
+          import urllib.parse
           from datetime import datetime
           from pathlib import Path
           
@@ -118,7 +119,7 @@ jobs:
           print(f"API URL: {items_url}")
           
           cmd = [
-              'curl', '-s', '-w', '\nHTTP_CODE:%{http_code}',
+              'curl', '-sS', '-w', '\nHTTP_CODE:%{http_code}',
               items_url,
               '-H', f"Authorization: Bearer {api_token}"
           ]
@@ -217,8 +218,8 @@ jobs:
               
               # Double-check if item exists (in case it was added during this run)
               check_cmd = [
-                  'curl', '-s', '-w', '\nHTTP_CODE:%{http_code}',
-                  f"{items_url}/{item_id}",
+                  'curl', '-sS', '-w', '\nHTTP_CODE:%{http_code}',
+                  f"{items_url}/{urllib.parse.quote(item_id, safe='')}",
                   '-H', f"Authorization: Bearer {api_token}"
               ]
               
@@ -261,11 +262,11 @@ jobs:
               
               cmd = [
                   'curl', '-X', 'PUT',
-                  f"{items_url}/{item_id}",
+                  f"{items_url}/{urllib.parse.quote(item_id, safe='')}",
                   '-H', f"Authorization: Bearer {api_token}",
                   '-H', 'Content-Type: application/json',
                   '-d', json.dumps(payload),
-                  '-s', '-w', '\nHTTP_CODE:%{http_code}',
+                  '-sS', '-w', '\nHTTP_CODE:%{http_code}',
                   '--max-time', '30',  # 30 second timeout
                   '--connect-timeout', '10'  # 10 second connection timeout
               ]
