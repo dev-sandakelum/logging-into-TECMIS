@@ -1,0 +1,143 @@
+name: Clear TECMIS Data (manual only)
+
+# DANGER: wipes TECMIS notices from Redis and/or the repo's data/ folder.
+# Runs ONLY when triggered by hand from the Actions tab - no schedule, no push trigger.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'What to clear'
+        required: true
+        default: 'both'
+        type: choice
+        options:
+          - both
+          - redis-only
+          - data-folder-only
+      confirm:
+        description: 'Type CLEAR to confirm'
+        required: true
+        type: string
+      dry_run:
+        description: 'Dry run (only show what would be deleted)'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write  # Required to push the cleared data/ folder
+
+# Share the scraper's group so this never runs at the same time as a scrape
+concurrency:
+  group: scrape-tecmis
+  cancel-in-progress: false
+
+jobs:
+  clear:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Verify confirmation
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          if [ "$CONFIRM" != "CLEAR" ]; then
+            echo "✗ Confirmation text was '$CONFIRM' - expected 'CLEAR'. Aborting."
+            exit 1
+          fi
+          echo "✓ Confirmed. Target: ${{ inputs.target }} | Dry run: ${{ inputs.dry_run }}"
+
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Clear TECMIS notices from Redis
+        if: inputs.target == 'both' || inputs.target == 'redis-only'
+        env:
+          API_URL: ${{ secrets.DB_MONITOR_API_URL }}
+          API_TOKEN: ${{ secrets.DB_MONITOR_API_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [ -z "$API_URL" ] || [ -z "$API_TOKEN" ]; then
+            echo "✗ DB_MONITOR_API_URL / DB_MONITOR_API_TOKEN secrets not set."
+            exit 1
+          fi
+
+          python3 - <<'EOF'
+          import json, os, subprocess, urllib.parse
+
+          api_url = os.environ['API_URL'].rstrip('/')
+          token = os.environ['API_TOKEN']
+          dry_run = os.environ.get('DRY_RUN') == 'true'
+
+          # Same URL handling as sync-redis.yml
+          if '/items' in api_url:
+              items_url = api_url
+          elif '/api' in api_url:
+              items_url = f"{api_url}/items"
+          else:
+              items_url = f"{api_url}/api/items"
+
+          def curl(*args):
+              r = subprocess.run(
+                  ['curl', '-sS', '-w', '\nHTTP_CODE:%{http_code}',
+                   '--max-time', '30', '--connect-timeout', '10',
+                   '-H', f'Authorization: Bearer {token}', *args],
+                  capture_output=True, text=True)
+              body, _, code = r.stdout.rpartition('\nHTTP_CODE:')
+              return code.strip(), body, r.stderr
+
+          code, body, err = curl(items_url)
+          if code != '200':
+              print(f"✗ Could not list items (HTTP {code}): {body[:200]} {err[:200]}")
+              exit(1)
+
+          items = json.loads(body) if body.strip() else []
+          ids = [i['id'] for i in items if str(i.get('id', '')).startswith('tecmis-')]
+          print(f"Found {len(ids)} TECMIS item(s) in Redis (of {len(items)} total; non-TECMIS items are kept).")
+
+          if dry_run:
+              for i in ids:
+                  print(f"  would delete: {i}")
+              exit(0)
+
+          ok = fail = 0
+          for i in ids:
+              code, body, err = curl('-X', 'DELETE', f"{items_url}/{urllib.parse.quote(i, safe='')}")
+              if code == '200':
+                  ok += 1
+              else:
+                  fail += 1
+                  print(f"  ✗ {i}: HTTP {code} {body[:100]} {err[:100]}")
+
+          print(f"\nDeleted: {ok} | Failed: {fail}")
+          if fail:
+              exit(1)
+          EOF
+
+      - name: Clear data folder
+        if: inputs.target == 'both' || inputs.target == 'data-folder-only'
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          echo "Current data/ contents:"
+          find data -type f | sort || true
+
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "(dry run) would remove data/attachments/ and reset data/notices.json to []"
+            exit 0
+          fi
+
+          rm -rf data/attachments
+          mkdir -p data
+          echo "[]" > data/notices.json   # keep the file so the sync job doesn't fail
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A data/
+          if git diff --staged --quiet; then
+            echo "data/ already empty - nothing to commit."
+          else
+            git commit -m "chore: clear TECMIS data folder (manual reset $(date -u '+%Y-%m-%d %H:%M UTC'))"
+            git push
+            echo "✓ Pushed cleared data/ folder"
+          fi

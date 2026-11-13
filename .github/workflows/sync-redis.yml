@@ -79,7 +79,10 @@ jobs:
           API_URL: ${{ secrets.DB_MONITOR_API_URL }}
           API_TOKEN: ${{ secrets.DB_MONITOR_API_TOKEN }}
           GITHUB_REPO: ${{ github.repository }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GROQ_MODEL: ${{ vars.GROQ_MODEL }}
         run: |
+          pip install --quiet pypdf || echo "pypdf install failed - AI will use titles only"
           python - <<'EOF'
           import json
           import os
@@ -88,7 +91,8 @@ jobs:
           import urllib.parse
           from datetime import datetime
           from pathlib import Path
-          
+          from ai_enhance import enhance_notice, build_body
+
           api_url = os.environ['API_URL'].rstrip('/')
           api_token = os.environ['API_TOKEN']
           github_repo = os.environ['GITHUB_REPO']
@@ -212,6 +216,9 @@ jobs:
           success_count = 0
           fail_count = 0
           skipped_count = 0
+          ai_count = 0
+          ai_enabled = bool(os.environ.get('GROQ_API_KEY', '').strip())
+          print(f"\nAI enhancement (Groq): {'enabled' if ai_enabled else 'disabled (GROQ_API_KEY not set)'}")
           
           for notice in new_notices:
               item_id = f"tecmis-{notice['id']}"
@@ -230,24 +237,21 @@ jobs:
                   skipped_count += 1
                   continue
               
-              # Clean up the title (remove "Download" suffix if present)
-              title = notice['title'].replace('Download', '').strip()
-              
               # Determine the URL to use
               document_url = notice.get('url', '')
               filename = notice.get('file')
-              
+              file_path = attachments_dir / filename if filename else None
+
               # If we have a file, use GitHub raw URL instead of TECMIS URL
-              if filename and (attachments_dir / filename).exists():
-                  document_url = f"https://raw.githubusercontent.com/{github_repo}/main/data/attachments/{filename}"
-              
-              # Format the body with notice details
-              body = f"## {title}\n\n"
-              body += f"**Posted:** {notice['posted_at']}\n\n"
-              body += f"**Section:** {notice['section'].title()}\n\n"
-              if document_url:
-                  body += f"[View/Download]({document_url})"
-              
+              if file_path and file_path.exists():
+                  document_url = f"https://raw.githubusercontent.com/{github_repo}/main/data/attachments/{urllib.parse.quote(filename)}"
+
+              # AI-enhanced title/body via Groq (falls back to plain body on failure)
+              ai = enhance_notice(notice, file_path) if ai_enabled else None
+              if ai_enabled:
+                  ai_count += 1 if ai else 0
+              title, body = build_body(notice, document_url, ai)
+
               payload = {
                   "id": item_id,
                   "title": f"TECMIS: {title[:70]}{'...' if len(title) > 70 else ''}",
@@ -293,6 +297,7 @@ jobs:
           print(f"Sync complete!")
           print(f"  New:     {success_count}")
           print(f"  Skipped: {skipped_count}")
+          print(f"  AI-enhanced: {ai_count}")
           print(f"  Failed:  {fail_count}")
           print(f"  Total in Redis: {len(existing_ids) + success_count}")
           print(f"{'='*60}")
