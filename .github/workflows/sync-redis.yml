@@ -79,10 +79,9 @@ jobs:
           API_URL: ${{ secrets.DB_MONITOR_API_URL }}
           API_TOKEN: ${{ secrets.DB_MONITOR_API_TOKEN }}
           GITHUB_REPO: ${{ github.repository }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          GROQ_MODEL: ${{ vars.GROQ_MODEL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
         run: |
-          pip install --quiet pypdf || echo "pypdf install failed - AI will use titles only"
           python - <<'EOF'
           import json
           import os
@@ -203,10 +202,21 @@ jobs:
                       if not file_path.exists():
                           try:
                               print(f"  Downloading: {filename}...")
-                              urllib.request.urlretrieve(url, file_path)
+                              # Percent-encode spaces/special chars in the path
+                              # (urllib rejects raw spaces as "control characters").
+                              # unquote first so already-encoded URLs aren't double-encoded.
+                              parts = urllib.parse.urlsplit(url.strip())
+                              safe_url = urllib.parse.urlunsplit(parts._replace(
+                                  path=urllib.parse.quote(urllib.parse.unquote(parts.path), safe='/'),
+                                  query=urllib.parse.quote(urllib.parse.unquote(parts.query), safe='=&'),
+                              ))
+                              req = urllib.request.Request(safe_url, headers={'User-Agent': 'Mozilla/5.0'})
+                              with urllib.request.urlopen(req, timeout=60) as resp, open(file_path, 'wb') as out:
+                                  out.write(resp.read())
                               downloaded_files.append(filename)
                               print(f"  ✓ Saved: {filename}")
                           except Exception as e:
+                              file_path.unlink(missing_ok=True)  # don't keep partial files
                               print(f"  ✗ Failed to download {filename}: {e}")
           
           if downloaded_files:
@@ -217,8 +227,8 @@ jobs:
           fail_count = 0
           skipped_count = 0
           ai_count = 0
-          ai_enabled = bool(os.environ.get('GROQ_API_KEY', '').strip())
-          print(f"\nAI enhancement (Groq): {'enabled' if ai_enabled else 'disabled (GROQ_API_KEY not set)'}")
+          ai_enabled = bool(os.environ.get('GEMINI_API_KEY', '').strip())
+          print(f"\nAI enhancement (Gemini): {'enabled' if ai_enabled else 'disabled (GEMINI_API_KEY not set)'}")
           
           for notice in new_notices:
               item_id = f"tecmis-{notice['id']}"
@@ -246,7 +256,7 @@ jobs:
               if file_path and file_path.exists():
                   document_url = f"https://raw.githubusercontent.com/{github_repo}/main/data/attachments/{urllib.parse.quote(filename)}"
 
-              # AI-enhanced title/body via Groq (falls back to plain body on failure)
+              # AI-enhanced title/body via Gemini (falls back to plain body on failure)
               ai = enhance_notice(notice, file_path) if ai_enabled else None
               if ai_enabled:
                   ai_count += 1 if ai else 0

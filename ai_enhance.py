@@ -1,21 +1,23 @@
 """
-AI notice enhancement using Groq (free tier).
+AI notice enhancement using Google Gemini (Google AI Studio, free tier).
 
 Turns a raw scraped TECMIS notice (messy title, optional PDF attachment)
 into a clean title + well-structured markdown body before it is pushed
-to Redis.
+to Redis. PDFs are sent directly to Gemini (it reads them natively,
+including scanned documents), so no PDF library is needed.
 
-- Stdlib only (urllib). `pypdf` is optional and only used to read PDF text.
+- Stdlib only (urllib).
 - Never raises: on any failure, `enhance_notice` returns None and the caller
   falls back to the plain (non-AI) body.
 
 Env vars:
-    GROQ_API_KEY   required to enable AI enhancement
-    GROQ_MODEL     optional, default "llama-3.3-70b-versatile" (free tier)
+    GEMINI_API_KEY   required to enable AI enhancement
+    GEMINI_MODEL     optional, default "gemini-3.5-flash-lite" (free tier)
 """
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -24,31 +26,32 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-DEFAULT_MODEL = "llama-3.3-70b-versatile"
-FALLBACK_MODEL = "llama-3.1-8b-instant"
-MAX_DOC_CHARS = 6000  # keep prompts small for free-tier token limits
-MIN_INTERVAL = 2.5    # seconds between calls (free tier: 30 req/min)
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+DEFAULT_MODEL = "gemini-3.5-flash-lite"
+MAX_PDF_BYTES = 15 * 1024 * 1024  # inline request limit is ~20 MB total
+MIN_INTERVAL = 7.0                # seconds between calls (free tier: ~10 req/min)
 
 _last_call = 0.0
 
 SYSTEM_PROMPT = """You rewrite university notices for students of the Faculty of Technology, University of Ruhuna (TECMIS system).
-You receive a raw scraped notice title (may contain junk like "Download" or merged dates) and, sometimes, text extracted from the attached document.
+You receive a raw scraped notice title (may contain junk like "Download" or merged dates) and, sometimes, the attached PDF document.
 
 Return ONLY a JSON object with these keys:
 {
   "title": "clean, concise, human-friendly title (max 80 chars, Title Case, no 'Download')",
   "category": one of ["Exam", "Timetable", "Results", "Registration", "Event", "Payment", "Academic", "Administrative", "Other"],
   "summary": "2-3 sentence plain-English summary of what the notice is about and who it affects",
-  "key_points": ["short bullet", "..."],          // 0-6 items, only facts present in the input
-  "important_dates": ["YYYY-MM-DD - what happens", "..."],  // 0-6 items, only dates found in the input
+  "key_points": ["short bullet", "..."],
+  "important_dates": ["YYYY-MM-DD - what happens", "..."],
   "action_required": "what students must do, or empty string if nothing",
   "audience": "who this applies to, e.g. 'BICT Level 2 students', or 'All students'"
 }
 
 Rules:
-- Never invent facts, dates, venues, or deadlines. If the document text is missing, base everything on the title only and keep key_points/important_dates empty unless obvious from the title.
+- key_points: 0-6 items; important_dates: 0-6 items. Only facts present in the input.
+- Never invent facts, dates, venues, or deadlines. If no document is attached, base everything on the title only and keep key_points/important_dates empty unless obvious from the title.
 - Expand abbreviations where clear: ICT, ET (Engineering Technology), BST (Biosystems Technology).
+- For timetables/result sheets, summarise the scope (levels, semesters, date range) instead of listing every row.
 - Be concise. No markdown inside JSON values."""
 
 
@@ -58,55 +61,44 @@ def _clean_posted_at(raw: str) -> str:
     return f"{m.group(1)} {m.group(2)}" if m else (raw or "").strip()
 
 
-def extract_document_text(file_path: Path | None) -> str:
-    """Best-effort text extraction from a PDF attachment (first pages only)."""
+def _pdf_part(file_path: Path | None) -> dict | None:
+    """Inline PDF part for Gemini, or None if not a usable PDF."""
     if not file_path or not file_path.exists() or file_path.suffix.lower() != ".pdf":
-        return ""
+        return None
     try:
-        from pypdf import PdfReader  # optional dependency
-    except ImportError:
-        return ""
-    try:
-        reader = PdfReader(str(file_path))
-        chunks: list[str] = []
-        total = 0
-        for page in reader.pages[:4]:
-            text = page.extract_text() or ""
-            chunks.append(text)
-            total += len(text)
-            if total >= MAX_DOC_CHARS:
-                break
-        text = re.sub(r"[ \t]+", " ", "\n".join(chunks))
-        text = re.sub(r"\n{3,}", "\n\n", text).strip()
-        return text[:MAX_DOC_CHARS]
-    except Exception as e:  # corrupt/scanned PDFs etc.
-        print(f"    (pdf text extraction failed: {e})")
-        return ""
+        data = file_path.read_bytes()
+    except OSError:
+        return None
+    if not data.startswith(b"%PDF") or len(data) > MAX_PDF_BYTES:
+        return None
+    return {"inline_data": {"mime_type": "application/pdf",
+                            "data": base64.b64encode(data).decode("ascii")}}
 
 
-def _groq_chat(api_key: str, model: str, user_content: str) -> dict | None:
+def _gemini_call(api_key: str, model: str, parts: list[dict]) -> dict | None:
     global _last_call
     wait = MIN_INTERVAL - (time.time() - _last_call)
     if wait > 0:
         time.sleep(wait)
 
+    # Gemini 3.x: keep default temperature and thinking settings (lowering
+    # temperature is discouraged); leave headroom since thinking uses output tokens.
+    generation_config = {
+        "maxOutputTokens": 4096,
+        "responseMimeType": "application/json",
+    }
+
     payload = {
-        "model": model,
-        "temperature": 0.2,
-        "max_tokens": 700,
-        "response_format": {"type": "json_object"},
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_content},
-        ],
+        "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+        "contents": [{"role": "user", "parts": parts}],
+        "generationConfig": generation_config,
     }
     req = urllib.request.Request(
-        GROQ_URL,
+        GEMINI_URL.format(model=model),
         data=json.dumps(payload).encode("utf-8"),
         headers={
-            "Authorization": f"Bearer {api_key}",
+            "x-goog-api-key": api_key,
             "Content-Type": "application/json",
-            # Groq's edge rejects the default Python-urllib User-Agent (HTTP 403)
             "User-Agent": "tecmis-notice-sync/1.0",
         },
         method="POST",
@@ -115,47 +107,53 @@ def _groq_chat(api_key: str, model: str, user_content: str) -> dict | None:
     for attempt in range(3):
         _last_call = time.time()
         try:
-            with urllib.request.urlopen(req, timeout=60) as resp:
+            with urllib.request.urlopen(req, timeout=120) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-            content = data["choices"][0]["message"]["content"]
-            return json.loads(content)
+            candidates = data.get("candidates") or []
+            if not candidates:
+                print(f"    (Gemini returned no candidates on {model}: {str(data)[:200]})")
+                return None
+            text = "".join(p.get("text", "") for p in candidates[0].get("content", {}).get("parts", []))
+            text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip())
+            return json.loads(text)
         except urllib.error.HTTPError as e:
             body = e.read().decode("utf-8", "replace")[:300]
-            if e.code == 429 and attempt < 2:
-                retry_after = e.headers.get("retry-after")
-                delay = min(float(retry_after) if retry_after else 20.0, 60.0)
-                print(f"    (Groq rate limited, retrying in {delay:.0f}s)")
+            if e.code in (429, 500, 503) and attempt < 2:
+                delay = 30.0 if e.code == 429 else 10.0
+                print(f"    (Gemini HTTP {e.code} on {model}, retrying in {delay:.0f}s)")
                 time.sleep(delay)
                 continue
-            print(f"    (Groq HTTP {e.code} on {model}: {body})")
+            print(f"    (Gemini HTTP {e.code} on {model}: {body})")
             return None
         except Exception as e:
-            print(f"    (Groq request failed on {model}: {e})")
+            print(f"    (Gemini request failed on {model}: {e})")
             return None
     return None
 
 
 def enhance_notice(notice: dict, file_path: Path | None = None) -> dict | None:
     """Return the AI-structured dict for a notice, or None if unavailable."""
-    api_key = os.environ.get("GROQ_API_KEY", "").strip()
+    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
         return None
 
     raw_title = notice.get("title", "").replace("Download", "").strip()
-    doc_text = extract_document_text(file_path)
+    pdf = _pdf_part(file_path)
 
-    user_content = (
+    prompt = (
         f"Raw title: {raw_title}\n"
         f"Posted: {_clean_posted_at(notice.get('posted_at', ''))}\n"
         f"Section: {notice.get('section', '')}\n"
-        f"Attachment filename: {notice.get('file') or 'none'}\n\n"
-        f"Document text:\n{doc_text if doc_text else '(not available)'}"
+        f"Attachment filename: {notice.get('file') or 'none'}\n"
+        f"Document: {'attached PDF' if pdf else '(not available)'}"
     )
+    parts = ([pdf] if pdf else []) + [{"text": prompt}]
 
-    model = os.environ.get("GROQ_MODEL", "").strip() or DEFAULT_MODEL
-    result = _groq_chat(api_key, model, user_content)
-    if result is None and model != FALLBACK_MODEL:
-        result = _groq_chat(api_key, FALLBACK_MODEL, user_content)
+    model = os.environ.get("GEMINI_MODEL", "").strip() or DEFAULT_MODEL
+    result = _gemini_call(api_key, model, parts)
+    if result is None and model != DEFAULT_MODEL:
+        # A custom GEMINI_MODEL failed (e.g. retired) - retry on the default
+        result = _gemini_call(api_key, DEFAULT_MODEL, parts)
     if not isinstance(result, dict) or not result.get("title"):
         return None
     return result
@@ -214,7 +212,7 @@ def build_body(notice: dict, document_url: str, ai: dict | None) -> tuple[str, s
 
 
 if __name__ == "__main__":
-    # Local test: python ai_enhance.py  (reads GROQ_API_KEY from env or .env)
+    # Local test: python ai_enhance.py  (reads GEMINI_API_KEY from env or .env)
     env_file = Path(__file__).with_name(".env")
     if env_file.exists():
         for line in env_file.read_text(encoding="utf-8").splitlines():
