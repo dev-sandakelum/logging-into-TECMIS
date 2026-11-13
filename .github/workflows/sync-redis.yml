@@ -36,6 +36,43 @@ jobs:
             echo "configured=true" >> $GITHUB_OUTPUT
           fi
 
+      - name: Test API connectivity
+        if: steps.check_config.outputs.configured == 'true'
+        env:
+          API_URL: ${{ secrets.DB_MONITOR_API_URL }}
+          API_TOKEN: ${{ secrets.DB_MONITOR_API_TOKEN }}
+        run: |
+          echo "Testing API connectivity..."
+          API_BASE_URL="${API_URL%/items}"
+          
+          # Test with verbose curl to see what's happening
+          HTTP_CODE=$(curl -s -w "%{http_code}" -o /dev/null \
+            "${API_BASE_URL}/items" \
+            -H "Authorization: Bearer ${API_TOKEN}" \
+            --max-time 30 \
+            --connect-timeout 10)
+          
+          echo "HTTP Response Code: $HTTP_CODE"
+          
+          if [ "$HTTP_CODE" = "000" ]; then
+            echo "ERROR: Could not connect to API"
+            echo "API URL: ${API_BASE_URL}/items"
+            echo "Please check:"
+            echo "  1. DB_MONITOR_API_URL is correct"
+            echo "  2. API is deployed and running"
+            echo "  3. Network connectivity from GitHub Actions"
+            exit 1
+          elif [ "$HTTP_CODE" = "401" ]; then
+            echo "ERROR: Authentication failed (401 Unauthorized)"
+            echo "Please check DB_MONITOR_API_TOKEN is correct"
+            exit 1
+          elif [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+            echo "✓ API is reachable and authenticated"
+          else
+            echo "WARNING: Unexpected HTTP code: $HTTP_CODE"
+            echo "Will proceed with sync anyway..."
+          fi
+
       - name: Sync new notices to Redis
         if: steps.check_config.outputs.configured == 'true'
         env:
@@ -65,6 +102,7 @@ jobs:
           
           # Step 1: Get all existing TECMIS notices from Redis
           print("Fetching existing TECMIS notices from Redis...")
+          print(f"API URL: {items_url}")
           
           cmd = [
               'curl', '-s', '-w', '\nHTTP_CODE:%{http_code}',
@@ -214,12 +252,21 @@ jobs:
                   '-H', f"Authorization: Bearer {api_token}",
                   '-H', 'Content-Type: application/json',
                   '-d', json.dumps(payload),
-                  '-s', '-w', '\nHTTP_CODE:%{http_code}'
+                  '-s', '-w', '\nHTTP_CODE:%{http_code}',
+                  '--max-time', '30',  # 30 second timeout
+                  '--connect-timeout', '10'  # 10 second connection timeout
               ]
               
               result = subprocess.run(cmd, capture_output=True, text=True)
               
-              if 'HTTP_CODE:200' in result.stdout or 'HTTP_CODE:201' in result.stdout:
+              # Check for connection errors
+              if 'HTTP_CODE:000' in result.stdout or not result.stdout.strip():
+                  print(f"✗ Connection failed: {title[:50]}...")
+                  print(f"  Error: Could not connect to API")
+                  if result.stderr:
+                      print(f"  Curl error: {result.stderr[:200]}")
+                  fail_count += 1
+              elif 'HTTP_CODE:200' in result.stdout or 'HTTP_CODE:201' in result.stdout:
                   section_label = "📌" if notice['section'] == 'recent' else "📁"
                   print(f"✓ {section_label} Synced: {title[:50]}...")
                   success_count += 1
