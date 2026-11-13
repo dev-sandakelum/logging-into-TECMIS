@@ -178,8 +178,20 @@ jobs:
           if not new_notices:
               print("✓ No new notices to sync. All notices are already in Redis.")
               exit(0)
-          
-          print(f"\nFound {len(new_notices)} new notice(s) to sync...")
+
+          # Push oldest first (bottom to top). notices.json is newest-first, so
+          # reverse it, then stable-sort by the posted timestamp. Notices with an
+          # unparseable date keep their reversed file position.
+          import re
+          def posted_key(n):
+              m = re.search(r'(\d{4}-\d{2}-\d{2})/(\d{2}:\d{2})', n.get('posted_at', ''))
+              return f"{m.group(1)} {m.group(2)}" if m else ''
+          new_notices.reverse()
+          if all(posted_key(n) for n in new_notices):
+              new_notices.sort(key=posted_key)
+
+          print(f"\nFound {len(new_notices)} new notice(s) to sync (oldest first)...")
+          print(f"  First: {posted_key(new_notices[0]) or '?'}  Last: {posted_key(new_notices[-1]) or '?'}")
           
           # Step 4: Download PDFs for new notices
           attachments_dir = Path('data/attachments')
