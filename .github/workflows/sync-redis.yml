@@ -78,17 +78,35 @@ jobs:
           try:
               parts = result.stdout.rsplit('\nHTTP_CODE:', 1)
               if len(parts) == 2 and parts[1].strip() == '200':
-                  items = json.loads(parts[0].strip())
-                  # Filter for TECMIS items
-                  existing_ids = {item['id'] for item in items if item['id'].startswith('tecmis-')}
-                  print(f"✓ Found {len(existing_ids)} existing TECMIS notice(s) in Redis")
+                  body = parts[0].strip()
+                  if body:  # Check if body is not empty
+                      items = json.loads(body)
+                      # Filter for TECMIS items
+                      existing_ids = {item['id'] for item in items if item['id'].startswith('tecmis-')}
+                      print(f"✓ Found {len(existing_ids)} existing TECMIS notice(s) in Redis")
+                  else:
+                      print("✓ Found 0 existing TECMIS notice(s) in Redis (empty response)")
+              else:
+                  print("✓ Found 0 existing TECMIS notice(s) in Redis (first sync)")
+          except json.JSONDecodeError as e:
+              print(f"⚠ Could not parse existing notices: {e}")
+              print(f"  Response: {result.stdout[:200]}")
+              print("  Will proceed with sync (treating as first sync)")
           except Exception as e:
-              print(f"⚠ Could not fetch existing notices: {e}")
+              print(f"⚠ Error fetching existing notices: {e}")
               print("  Will proceed with sync")
           
           # Step 2: Read local notices.json (ALL notices)
-          with open('data/notices.json', 'r', encoding='utf-8') as f:
-              all_notices = json.load(f)
+          print("\nReading local notices.json...")
+          try:
+              with open('data/notices.json', 'r', encoding='utf-8') as f:
+                  all_notices = json.load(f)
+          except FileNotFoundError:
+              print("✗ Error: data/notices.json not found!")
+              exit(1)
+          except json.JSONDecodeError as e:
+              print(f"✗ Error: Could not parse data/notices.json: {e}")
+              exit(1)
           
           print(f"\nTotal notices in local file: {len(all_notices)}")
           
