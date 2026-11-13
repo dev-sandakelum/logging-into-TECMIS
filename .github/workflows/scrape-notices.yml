@@ -40,83 +40,13 @@ jobs:
         run: python scrape.py
 
       - name: Commit and push if changed
-        id: commit_changes
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/notices.json NOTICES.md
           if git diff --staged --quiet; then
             echo "No changes - nothing to commit."
-            echo "changed=false" >> $GITHUB_OUTPUT
           else
             git commit -m "chore: update TECMIS notices ($(date -u '+%Y-%m-%d %H:%M UTC'))"
             git push
-            echo "changed=true" >> $GITHUB_OUTPUT
           fi
-
-      - name: Update Redis via API
-        if: steps.commit_changes.outputs.changed == 'true'
-        env:
-          API_URL: ${{ secrets.DB_MONITOR_API_URL }}
-          API_TOKEN: ${{ secrets.DB_MONITOR_API_TOKEN }}
-        run: |
-          # Read notices.json and create notification items for recent notices
-          python - <<EOF
-          import json
-          import os
-          import subprocess
-          from datetime import datetime
-          
-          # Read the notices file
-          with open('data/notices.json', 'r', encoding='utf-8') as f:
-              notices = json.load(f)
-          
-          # Get only recent notices (first 5)
-          recent_notices = [n for n in notices if n['section'] == 'recent'][:5]
-          
-          api_url = os.environ['API_URL']
-          api_token = os.environ['API_TOKEN']
-          
-          print(f"Updating Redis with {len(recent_notices)} recent notices...")
-          
-          for notice in recent_notices:
-              # Create a notification item for each notice
-              item_id = f"tecmis-{notice['id']}"
-              
-              # Format the body with notice details
-              body = f"## {notice['title']}\n\n"
-              body += f"**Posted:** {notice['posted_at']}\n\n"
-              if notice['url']:
-                  body += f"[View/Download]({notice['url']})"
-              
-              payload = {
-                  "id": item_id,
-                  "title": f"TECMIS: {notice['title'][:50]}...",
-                  "body": body,
-                  "type": "info",
-                  "createdAt": datetime.utcnow().isoformat() + 'Z',
-                  "updatedAt": datetime.utcnow().isoformat() + 'Z',
-                  "done": False,
-                  "seen": False,
-                  "source": "tecmis-scraper"
-              }
-              
-              # Make PUT request to the API
-              cmd = [
-                  'curl', '-X', 'PUT',
-                  f"{api_url}/{item_id}",
-                  '-H', f"Authorization: Bearer {api_token}",
-                  '-H', 'Content-Type: application/json',
-                  '-d', json.dumps(payload),
-                  '-s', '-w', '\\nHTTP_CODE:%{http_code}'
-              ]
-              
-              result = subprocess.run(cmd, capture_output=True, text=True)
-              
-              if 'HTTP_CODE:200' in result.stdout or 'HTTP_CODE:201' in result.stdout:
-                  print(f"✓ Updated {item_id}")
-              else:
-                  print(f"✗ Failed to update {item_id}: {result.stdout}")
-          
-          print("Redis update complete!")
-          EOF

@@ -1,0 +1,138 @@
+name: Sync TECMIS Notices to Redis
+
+on:
+  schedule:
+    - cron: '10 */6 * * *'  # Run 10 minutes after scraper (every 6 hours)
+  workflow_dispatch:        # manual trigger from the Actions tab
+  workflow_run:
+    workflows: ["Scrape TECMIS Notices"]
+    types:
+      - completed
+
+permissions:
+  contents: read
+
+jobs:
+  sync-to-redis:
+    runs-on: ubuntu-latest
+    # Only run if we have the API secrets configured
+    if: ${{ secrets.DB_MONITOR_API_URL != '' && secrets.DB_MONITOR_API_TOKEN != '' }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Sync new notices to Redis
+        env:
+          API_URL: ${{ secrets.DB_MONITOR_API_URL }}
+          API_TOKEN: ${{ secrets.DB_MONITOR_API_TOKEN }}
+        run: |
+          python - <<'EOF'
+          import json
+          import os
+          import subprocess
+          from datetime import datetime
+          
+          api_url = os.environ['API_URL'].rstrip('/')
+          api_token = os.environ['API_TOKEN']
+          
+          # Step 1: Get the last TECMIS notice date from Redis
+          print("Fetching last TECMIS notice date from Redis...")
+          
+          cmd = [
+              'curl', '-s',
+              f"{api_url.replace('/items', '')}/tecmis-last-date",
+              '-H', f"Authorization: Bearer {api_token}"
+          ]
+          
+          result = subprocess.run(cmd, capture_output=True, text=True)
+          
+          try:
+              last_date_response = json.loads(result.stdout)
+              last_date = last_date_response.get('lastDate')
+              print(f"Last date in Redis: {last_date if last_date else 'None (first sync)'}")
+          except json.JSONDecodeError:
+              print(f"Error parsing response: {result.stdout}")
+              last_date = None
+          
+          # Step 2: Read local notices.json
+          with open('data/notices.json', 'r', encoding='utf-8') as f:
+              notices = json.load(f)
+          
+          # Step 3: Filter for new notices (only those posted after last_date)
+          new_notices = []
+          
+          for notice in notices:
+              # Only process recent section notices
+              if notice['section'] != 'recent':
+                  continue
+              
+              posted_at = notice['posted_at']
+              
+              # If we have a last_date, only include notices newer than it
+              if last_date is None or posted_at > last_date:
+                  new_notices.append(notice)
+          
+          if not new_notices:
+              print("No new notices to sync.")
+              exit(0)
+          
+          print(f"\nFound {len(new_notices)} new notice(s) to sync...")
+          
+          # Step 4: Push new notices to Redis
+          success_count = 0
+          fail_count = 0
+          
+          for notice in new_notices:
+              item_id = f"tecmis-{notice['id']}"
+              
+              # Clean up the title (remove "Download" suffix if present)
+              title = notice['title'].replace('Download', '').strip()
+              
+              # Format the body with notice details
+              body = f"## {title}\n\n"
+              body += f"**Posted:** {notice['posted_at']}\n\n"
+              if notice['url']:
+                  body += f"[View/Download]({notice['url']})"
+              
+              payload = {
+                  "id": item_id,
+                  "title": f"TECMIS: {title[:70]}{'...' if len(title) > 70 else ''}",
+                  "body": body,
+                  "type": "tecmis",
+                  "createdAt": datetime.utcnow().isoformat() + 'Z',
+                  "updatedAt": datetime.utcnow().isoformat() + 'Z',
+                  "done": False,
+                  "seen": False,
+                  "source": "tecmis-scraper"
+              }
+              
+              # Ensure api_url ends with /items for the PUT request
+              items_url = api_url if api_url.endswith('/items') else f"{api_url}/items"
+              
+              cmd = [
+                  'curl', '-X', 'PUT',
+                  f"{items_url}/{item_id}",
+                  '-H', f"Authorization: Bearer {api_token}",
+                  '-H', 'Content-Type: application/json',
+                  '-d', json.dumps(payload),
+                  '-s', '-w', '\nHTTP_CODE:%{http_code}'
+              ]
+              
+              result = subprocess.run(cmd, capture_output=True, text=True)
+              
+              if 'HTTP_CODE:200' in result.stdout or 'HTTP_CODE:201' in result.stdout:
+                  print(f"✓ Synced: {title[:60]}...")
+                  success_count += 1
+              else:
+                  print(f"✗ Failed: {title[:60]}...")
+                  print(f"  Response: {result.stdout}")
+                  fail_count += 1
+          
+          print(f"\nSync complete! Success: {success_count}, Failed: {fail_count}")
+          EOF
