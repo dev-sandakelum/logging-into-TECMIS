@@ -135,12 +135,22 @@ def login_and_fetch(user: str, password: str) -> str:
     ))
     response.raise_for_status()
 
-    if "mpcng.php" in response.text:
+    # Check if actually redirected to password change page (not just commented code)
+    if "mpcng.php" in response.url:
         raise SystemExit(
             "TECMIS is forcing a periodic password change for this account.\n"
             "Log in once in a browser, change the password, update the "
             "TECMIS_PASS secret, then re-run."
         )
+    
+    # If we see the welcome message, login succeeded even if mpcng.php appears in comments
+    if "Welcome!" not in response.text and "Log Out" not in response.text:
+        if "mpcng.php" in response.text and "<!--" not in response.text.split("mpcng.php")[0][-50:]:
+            raise SystemExit(
+                "TECMIS is forcing a periodic password change for this account.\n"
+                "Log in once in a browser, change the password, update the "
+                "TECMIS_PASS secret, then re-run."
+            )
 
     print("Fetching the NOTICE page ...")
     notices_page = retry(lambda: session.get(NOTICES_URL, timeout=60))
