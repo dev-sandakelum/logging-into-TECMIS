@@ -39,10 +39,17 @@ Repository **Settings → Secrets and variables → Actions → New repository s
 |---------------|--------------------------------|
 | `TECMIS_USER` | your TECMIS index number       |
 | `TECMIS_PASS` | your TECMIS password           |
-| `DB_MONITOR_API_URL` | your DB Monitor API base URL (e.g., `https://your-project.vercel.app/api/items`) |
+| `DB_MONITOR_API_URL` | your DB Monitor API URL (flexible format - see below) |
 | `DB_MONITOR_API_TOKEN` | your API authentication token |
 
 **Note:** The `DB_MONITOR_API_*` secrets are optional. If provided, the workflow will automatically push recent TECMIS notices to your Redis-backed notification API whenever notices change.
+
+**API URL Format:** The sync script is smart and accepts any of these formats:
+- `https://your-project.vercel.app` (domain only)
+- `https://your-project.vercel.app/api` (API base path)
+- `https://your-project.vercel.app/api/items` (full items endpoint)
+
+It will automatically detect and construct the correct endpoints.
 
 ### 2. Run it
 

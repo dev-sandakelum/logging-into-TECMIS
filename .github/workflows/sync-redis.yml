@@ -92,13 +92,26 @@ jobs:
           api_token = os.environ['API_TOKEN']
           github_repo = os.environ['GITHUB_REPO']
           
-          # Construct the base API URL (remove /items if present)
-          if api_url.endswith('/items'):
-              base_api_url = api_url.rsplit('/items', 1)[0]
-          else:
-              base_api_url = api_url
+          # Smart URL handling - works with both formats:
+          # 1. https://api.vercel.app (base URL)
+          # 2. https://api.vercel.app/api/items (full items URL)
           
-          items_url = api_url if api_url.endswith('/items') else f"{base_api_url}/items"
+          if '/items' in api_url:
+              # Full URL provided (e.g., https://api.vercel.app/api/items)
+              items_url = api_url
+              base_api_url = api_url.rsplit('/items', 1)[0]
+          elif '/api' in api_url:
+              # API base provided (e.g., https://api.vercel.app/api)
+              items_url = f"{api_url}/items"
+              base_api_url = api_url
+          else:
+              # Domain only provided (e.g., https://api.vercel.app)
+              items_url = f"{api_url}/api/items"
+              base_api_url = f"{api_url}/api"
+          
+          print(f"Resolved API endpoints:")
+          print(f"  Items URL: {items_url}")
+          print(f"  Base URL:  {base_api_url}")
           
           # Step 1: Get all existing TECMIS notices from Redis
           print("Fetching existing TECMIS notices from Redis...")
