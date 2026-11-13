@@ -51,24 +51,47 @@ jobs:
           api_url = os.environ['API_URL'].rstrip('/')
           api_token = os.environ['API_TOKEN']
           
+          # Construct the base API URL (remove /items if present)
+          if api_url.endswith('/items'):
+              base_api_url = api_url.rsplit('/items', 1)[0]
+          else:
+              base_api_url = api_url
+          
           # Step 1: Get the last TECMIS notice date from Redis
           print("Fetching last TECMIS notice date from Redis...")
           
           cmd = [
-              'curl', '-s',
-              f"{api_url.replace('/items', '')}/tecmis-last-date",
+              'curl', '-s', '-w', '\nHTTP_CODE:%{http_code}',
+              f"{base_api_url}/tecmis-last-date",
               '-H', f"Authorization: Bearer {api_token}"
           ]
           
           result = subprocess.run(cmd, capture_output=True, text=True)
           
+          # Parse the response
+          last_date = None
           try:
-              last_date_response = json.loads(result.stdout)
-              last_date = last_date_response.get('lastDate')
-              print(f"Last date in Redis: {last_date if last_date else 'None (first sync)'}")
-          except json.JSONDecodeError:
-              print(f"Error parsing response: {result.stdout}")
-              last_date = None
+              # Split HTTP code from body
+              parts = result.stdout.rsplit('\nHTTP_CODE:', 1)
+              if len(parts) == 2:
+                  body = parts[0].strip()
+                  http_code = parts[1].strip()
+                  
+                  if http_code == '200' and body:
+                      last_date_response = json.loads(body)
+                      last_date = last_date_response.get('lastDate')
+                      print(f"✓ Last date in Redis: {last_date if last_date else 'None (first sync)'}")
+                  else:
+                      print(f"⚠ API returned HTTP {http_code}, treating as first sync")
+              else:
+                  print(f"⚠ Unexpected response format: {result.stdout[:200]}")
+          except json.JSONDecodeError as e:
+              print(f"⚠ Could not parse API response as JSON: {e}")
+              print(f"  Response was: {result.stdout[:200]}")
+              print("  Treating as first sync (will sync all recent notices)")
+          except Exception as e:
+              print(f"⚠ Error fetching last date: {e}")
+              print("  Treating as first sync")
           
           # Step 2: Read local notices.json
           with open('data/notices.json', 'r', encoding='utf-8') as f:
@@ -89,7 +112,7 @@ jobs:
                   new_notices.append(notice)
           
           if not new_notices:
-              print("No new notices to sync.")
+              print("✓ No new notices to sync.")
               exit(0)
           
           print(f"\nFound {len(new_notices)} new notice(s) to sync...")
@@ -97,6 +120,9 @@ jobs:
           # Step 4: Push new notices to Redis
           success_count = 0
           fail_count = 0
+          
+          # Ensure we have the correct items URL
+          items_url = api_url if api_url.endswith('/items') else f"{base_api_url}/items"
           
           for notice in new_notices:
               item_id = f"tecmis-{notice['id']}"
@@ -122,9 +148,6 @@ jobs:
                   "source": "tecmis-scraper"
               }
               
-              # Ensure api_url ends with /items for the PUT request
-              items_url = api_url if api_url.endswith('/items') else f"{api_url}/items"
-              
               cmd = [
                   'curl', '-X', 'PUT',
                   f"{items_url}/{item_id}",
@@ -141,8 +164,14 @@ jobs:
                   success_count += 1
               else:
                   print(f"✗ Failed: {title[:60]}...")
-                  print(f"  Response: {result.stdout}")
+                  print(f"  Response: {result.stdout[:200]}")
                   fail_count += 1
           
-          print(f"\nSync complete! Success: {success_count}, Failed: {fail_count}")
+          print(f"\n{'='*60}")
+          print(f"Sync complete! Success: {success_count}, Failed: {fail_count}")
+          print(f"{'='*60}")
+          
+          # Exit with error if all failed
+          if fail_count > 0 and success_count == 0:
+              exit(1)
           EOF
