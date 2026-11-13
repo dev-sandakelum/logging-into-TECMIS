@@ -312,6 +312,10 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ ! -d data/attachments ]; then
+            echo "No attachments folder - nothing to commit."
+            exit 0
+          fi
           git add data/attachments/
           if git diff --staged --quiet; then
             echo "No new attachments to commit."
