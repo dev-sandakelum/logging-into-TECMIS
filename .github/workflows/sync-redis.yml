@@ -61,62 +61,49 @@ jobs:
           else:
               base_api_url = api_url
           
-          # Step 1: Get the last TECMIS notice date from Redis
-          print("Fetching last TECMIS notice date from Redis...")
+          items_url = api_url if api_url.endswith('/items') else f"{base_api_url}/items"
+          
+          # Step 1: Get all existing TECMIS notices from Redis
+          print("Fetching existing TECMIS notices from Redis...")
           
           cmd = [
               'curl', '-s', '-w', '\nHTTP_CODE:%{http_code}',
-              f"{base_api_url}/tecmis-last-date",
+              items_url,
               '-H', f"Authorization: Bearer {api_token}"
           ]
           
           result = subprocess.run(cmd, capture_output=True, text=True)
           
-          # Parse the response
-          last_date = None
+          existing_ids = set()
           try:
-              # Split HTTP code from body
               parts = result.stdout.rsplit('\nHTTP_CODE:', 1)
-              if len(parts) == 2:
-                  body = parts[0].strip()
-                  http_code = parts[1].strip()
-                  
-                  if http_code == '200' and body:
-                      last_date_response = json.loads(body)
-                      last_date = last_date_response.get('lastDate')
-                      print(f"✓ Last date in Redis: {last_date if last_date else 'None (first sync)'}")
-                  else:
-                      print(f"⚠ API returned HTTP {http_code}, treating as first sync")
-              else:
-                  print(f"⚠ Unexpected response format: {result.stdout[:200]}")
-          except json.JSONDecodeError as e:
-              print(f"⚠ Could not parse API response as JSON: {e}")
-              print(f"  Response was: {result.stdout[:200]}")
-              print("  Treating as first sync (will sync all recent notices)")
+              if len(parts) == 2 and parts[1].strip() == '200':
+                  items = json.loads(parts[0].strip())
+                  # Filter for TECMIS items
+                  existing_ids = {item['id'] for item in items if item['id'].startswith('tecmis-')}
+                  print(f"✓ Found {len(existing_ids)} existing TECMIS notice(s) in Redis")
           except Exception as e:
-              print(f"⚠ Error fetching last date: {e}")
-              print("  Treating as first sync")
+              print(f"⚠ Could not fetch existing notices: {e}")
+              print("  Will proceed with sync")
           
-          # Step 2: Read local notices.json
+          # Step 2: Read local notices.json (ALL notices)
           with open('data/notices.json', 'r', encoding='utf-8') as f:
-              notices = json.load(f)
+              all_notices = json.load(f)
           
-          # Step 3: Filter for new notices (only those posted after last_date)
+          print(f"\nTotal notices in local file: {len(all_notices)}")
+          
+          # Step 3: Filter for notices that don't exist in Redis yet
           new_notices = []
           
-          for notice in notices:
-              # Only process recent section notices
-              if notice['section'] != 'recent':
-                  continue
+          for notice in all_notices:
+              item_id = f"tecmis-{notice['id']}"
               
-              posted_at = notice['posted_at']
-              
-              # If we have a last_date, only include notices newer than it
-              if last_date is None or posted_at > last_date:
+              # Only add if not already in Redis
+              if item_id not in existing_ids:
                   new_notices.append(notice)
           
           if not new_notices:
-              print("✓ No new notices to sync.")
+              print("✓ No new notices to sync. All notices are already in Redis.")
               exit(0)
           
           print(f"\nFound {len(new_notices)} new notice(s) to sync...")
@@ -151,15 +138,27 @@ jobs:
           if downloaded_files:
               print(f"\n✓ Downloaded {len(downloaded_files)} attachment(s)")
           
-          # Step 5: Push new notices to Redis with GitHub raw URLs
+          # Step 5: Push new notices to Redis
           success_count = 0
           fail_count = 0
-          
-          # Ensure we have the correct items URL
-          items_url = api_url if api_url.endswith('/items') else f"{base_api_url}/items"
+          skipped_count = 0
           
           for notice in new_notices:
               item_id = f"tecmis-{notice['id']}"
+              
+              # Double-check if item exists (in case it was added during this run)
+              check_cmd = [
+                  'curl', '-s', '-w', '\nHTTP_CODE:%{http_code}',
+                  f"{items_url}/{item_id}",
+                  '-H', f"Authorization: Bearer {api_token}"
+              ]
+              
+              check_result = subprocess.run(check_cmd, capture_output=True, text=True)
+              
+              # If item exists (HTTP 200), skip it
+              if 'HTTP_CODE:200' in check_result.stdout:
+                  skipped_count += 1
+                  continue
               
               # Clean up the title (remove "Download" suffix if present)
               title = notice['title'].replace('Download', '').strip()
@@ -175,6 +174,7 @@ jobs:
               # Format the body with notice details
               body = f"## {title}\n\n"
               body += f"**Posted:** {notice['posted_at']}\n\n"
+              body += f"**Section:** {notice['section'].title()}\n\n"
               if document_url:
                   body += f"[View/Download]({document_url})"
               
@@ -202,15 +202,20 @@ jobs:
               result = subprocess.run(cmd, capture_output=True, text=True)
               
               if 'HTTP_CODE:200' in result.stdout or 'HTTP_CODE:201' in result.stdout:
-                  print(f"✓ Synced: {title[:60]}...")
+                  section_label = "📌" if notice['section'] == 'recent' else "📁"
+                  print(f"✓ {section_label} Synced: {title[:50]}...")
                   success_count += 1
               else:
-                  print(f"✗ Failed: {title[:60]}...")
+                  print(f"✗ Failed: {title[:50]}...")
                   print(f"  Response: {result.stdout[:200]}")
                   fail_count += 1
           
           print(f"\n{'='*60}")
-          print(f"Sync complete! Success: {success_count}, Failed: {fail_count}")
+          print(f"Sync complete!")
+          print(f"  New:     {success_count}")
+          print(f"  Skipped: {skipped_count}")
+          print(f"  Failed:  {fail_count}")
+          print(f"  Total in Redis: {len(existing_ids) + success_count}")
           print(f"{'='*60}")
           
           # Exit with error if all failed
