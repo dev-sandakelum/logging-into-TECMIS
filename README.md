@@ -19,6 +19,8 @@ workflow**), a GitHub Actions workflow:
    *Previous Notices* — with number, posted date/time, title and download link.
 4. Writes `data/notices.json` (canonical data) and `NOTICES.md` (readable
    table) and commits them only if something actually changed.
+5. **NEW:** If notices changed and Redis API secrets are configured, automatically
+   pushes the 5 most recent notices to your DB Monitor API for real-time notifications.
 
 The scraper uses plain HTTPS requests + BeautifulSoup (no headless browser):
 the TECMIS pages are server-rendered PHP, so login is a simple form POST and
@@ -34,6 +36,10 @@ Repository **Settings → Secrets and variables → Actions → New repository s
 |---------------|--------------------------------|
 | `TECMIS_USER` | your TECMIS index number       |
 | `TECMIS_PASS` | your TECMIS password           |
+| `DB_MONITOR_API_URL` | your DB Monitor API base URL (e.g., `https://your-project.vercel.app/api/items`) |
+| `DB_MONITOR_API_TOKEN` | your API authentication token |
+
+**Note:** The `DB_MONITOR_API_*` secrets are optional. If provided, the workflow will automatically push recent TECMIS notices to your Redis-backed notification API whenever notices change.
 
 ### 2. Run it
 
