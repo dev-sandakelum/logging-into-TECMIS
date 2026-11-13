@@ -94,5 +94,8 @@ TECMIS_USER=... TECMIS_PASS=... DOWNLOAD_PDFS=1 python scrape.py
   password, update the `TECMIS_PASS` secret.
 - The site is sometimes slow from outside Sri Lanka; the scraper retries each
   request up to 3 times with backoff before failing.
-- Notices are public documents published by the faculty; still, keep the
-  repository **private** since it is tied to your student account.
+- Notices are public documents published by the faculty, and your credentials
+  live only in encrypted repository secrets — so a public repo is fine. If you
+  prefer the data not to be publicly browsable, flip the repository to
+  private in **Settings** at any time; the workflow keeps working either way
+  (private repos just consume Actions minutes).
