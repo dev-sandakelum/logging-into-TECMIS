@@ -119,7 +119,7 @@ def make_session() -> requests.Session:
     return session
 
 
-def login_and_fetch(user: str, password: str) -> str:
+def login_and_fetch(user: str, password: str) -> tuple[requests.Session, str]:
     """POST the login form, then fetch the NOTICE page and validate it."""
     session = make_session()
 
@@ -163,7 +163,7 @@ def login_and_fetch(user: str, password: str) -> str:
             "Check the TECMIS_USER / TECMIS_PASS secrets "
             "(or your .env file when running locally)."
         )
-    return html
+    return session, html
 
 
 # --------------------------------------------------------------------------- #
@@ -178,6 +178,32 @@ def notice_id(url: str) -> str:
     return f"file-{filename}"
 
 
+def fix_raw_html(html: str) -> str:
+    """Repair TECMIS markup quirks before parsing.
+
+    The live page writes links as `?taskf=incl&noticeid=3190` with a bare `&`.
+    HTML parsers decode `&not` as the entity "¬", producing `¬iceid=3190` and
+    losing the notice id. Escaping the ampersand keeps the URL intact.
+    """
+    return re.sub(r"&(?=noticeid=)", "&amp;", html)
+
+
+def cell_text(td) -> str:
+    """Text that belongs to this <td> only.
+
+    The live page does not close its <td> tags, so html.parser nests each cell
+    inside the previous one and get_text() would return the whole rest of the
+    row. Only the cell's direct text (plus inline tags that are not cells) is
+    taken here.
+    """
+    parts = []
+    for child in td.children:
+        if getattr(child, "name", None) in ("td", "tr"):
+            break  # the next (unclosed) cell starts here
+        parts.append(child if isinstance(child, str) else child.get_text())
+    return " ".join("".join(parts).split())
+
+
 def parse_notices(html: str, base_url: str = NOTICES_URL) -> list[dict]:
     """Extract every notice row from the NOTICE page.
 
@@ -186,7 +212,7 @@ def parse_notices(html: str, base_url: str = NOTICES_URL) -> list[dict]:
       <h3>Previous Notices</h3><table>... same shape
     Columns: No | Add Date / Time | Title | Download Link
     """
-    soup = BeautifulSoup(html, "html.parser")
+    soup = BeautifulSoup(fix_raw_html(html), "html.parser")
     by_id: dict[str, dict] = {}
 
     for h3 in soup.find_all("h3"):
@@ -205,12 +231,13 @@ def parse_notices(html: str, base_url: str = NOTICES_URL) -> list[dict]:
             if len(cells) < 4:
                 continue
 
-            raw_no = cells[0].get_text(strip=True)
-            raw_datetime = cells[1].get_text(strip=True)
-            title = " ".join(cells[2].get_text().split())
+            raw_no = cell_text(cells[0])
+            raw_datetime = cell_text(cells[1])
+            title = cell_text(cells[2])
 
             anchor = cells[3].find("a")
             href = anchor.get("href", "").strip() if anchor else ""
+            href = href.replace("¬iceid=", "&noticeid=")  # safety net for "&not" decoding
             url = urljoin(base_url, href) if href else ""
 
             match = DATE_TIME_RE.match(raw_datetime)
@@ -238,6 +265,97 @@ def parse_notices(html: str, base_url: str = NOTICES_URL) -> list[dict]:
         reverse=True,
     )
     return notices
+
+
+DOC_EXTENSIONS = (".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+                  ".jpg", ".jpeg", ".png")
+
+
+def parse_notice_content(html: str, base_url: str = NOTICES_URL) -> dict | None:
+    """Extract the body of a text notice (form_53_a.php?taskf=incl&noticeid=N).
+
+    Opening such a notice reloads the NOTICE page with the notice shown on top:
+      <strong><u><center>TITLE</center></u></strong><br>
+      <div id="m"> ...notice HTML... </div>
+      <div align="center"><h3>Most Recent Notices</h3> ...tables...
+    Returns {"content": text, "links": [urls]} or None if not found.
+    """
+    soup = BeautifulSoup(fix_raw_html(html), "html.parser")
+    body = soup.find("div", id="m")
+    if body is None:
+        return None
+    # If the div is not closed properly the notice tables end up inside it.
+    for el in body.find_all(["h3", "table"]):
+        el.decompose()
+
+    links: list[str] = []
+    for tag, attr in (("a", "href"), ("img", "src")):
+        for el in body.find_all(tag):
+            ref = (el.get(attr) or "").strip()
+            if not ref or ref.startswith(("#", "javascript:", "mailto:", "data:")):
+                continue
+            full = urljoin(base_url, ref).replace(" ", "%20")
+            if full not in links:
+                links.append(full)
+
+    # Line breaks only at block-level tags; inline tags (<strong>, <a>, <span>)
+    # stay inside their sentence.
+    for br in body.find_all("br"):
+        br.replace_with("\n")
+    for block in body.find_all(["p", "div", "li", "tr", "h1", "h2", "h4", "h5", "h6"]):
+        block.insert_before("\n")
+        block.insert_after("\n")
+    for li in body.find_all("li"):
+        li.insert(0, "- ")
+    text = body.get_text().replace("\xa0", " ")
+    lines = [" ".join(line.split()) for line in text.splitlines()]
+    content = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+    if not content and not links:
+        return None
+    return {"content": content, "links": links}
+
+
+def attach_notice_contents(session: requests.Session, notices: list[dict],
+                           previous: dict[str, dict]) -> None:
+    """Fetch the body of every text notice (those without a direct file).
+
+    Content already saved in a previous run is reused, so each notice page is
+    only fetched once.
+    """
+    fetched = reused = failed = 0
+    for notice in notices:
+        if "noticeid=" not in (notice.get("url") or ""):
+            continue
+        old = previous.get(notice["id"])
+        if old and old.get("content"):
+            notice["content"] = old["content"]
+            notice["links"] = old.get("links", [])
+            reused += 1
+            continue
+        try:
+            resp = retry(lambda u=notice["url"]: session.get(u, timeout=60))
+            resp.raise_for_status()
+            if "name='uname'" in resp.text:
+                raise RuntimeError("session expired (login form returned)")
+            parsed = parse_notice_content(resp.text)
+            if parsed is None:
+                raise RuntimeError("notice body (<div id='m'>) not found")
+            notice["content"] = parsed["content"]
+            notice["links"] = parsed["links"]
+            fetched += 1
+            time.sleep(0.5)  # be gentle with the university server
+        except Exception as exc:  # noqa: BLE001 - keep going notice by notice
+            failed += 1
+            print(f"[warn] could not fetch notice {notice['id']}: {exc}", file=sys.stderr)
+    print(f"Text notices: {fetched} fetched, {reused} reused, {failed} failed.")
+
+
+def load_previous(out_dir: Path) -> dict[str, dict]:
+    path = out_dir / "data" / "notices.json"
+    try:
+        return {n["id"]: n for n in json.loads(path.read_text(encoding="utf-8"))}
+    except Exception:  # noqa: BLE001 - missing/corrupt file just means no cache
+        return {}
 
 
 # --------------------------------------------------------------------------- #
@@ -357,6 +475,7 @@ def main() -> None:
     load_dotenv()
     out_dir = Path(args.out_dir).resolve()
 
+    session = None
     if args.parse_file:
         html = Path(args.parse_file).read_text(encoding="utf-8", errors="replace")
         print(f"Parsing saved page: {args.parse_file}")
@@ -369,13 +488,18 @@ def main() -> None:
                 "Add them as repository secrets (GitHub Actions) or to a local "
                 ".env file, or use --parse-file for offline testing."
             )
-        html = login_and_fetch(user, password)
+        session, html = login_and_fetch(user, password)
 
     notices = parse_notices(html)
     if not notices:
         raise SystemExit(
             "No notices were parsed - the NOTICE page layout may have changed."
         )
+
+    # Text-only notices: open each one (logged-in session) and save its body.
+    if session is not None:
+        print("Fetching text notice contents ...")
+        attach_notice_contents(session, notices, load_previous(out_dir))
 
     json_path, md_path = write_outputs(notices, out_dir)
     recent = sum(1 for n in notices if n["section"] == "recent")
@@ -385,8 +509,8 @@ def main() -> None:
     print(f"Wrote {json_path}")
     print(f"Wrote {md_path}")
 
-    if __import__("os").environ.get("DOWNLOAD_PDFS") == "1" and not args.parse_file:
-        session = make_session()
+    if __import__("os").environ.get("DOWNLOAD_PDFS") == "1" and session is not None:
+        # reuse the logged-in session (a fresh one would get the login page)
         print("DOWNLOAD_PDFS=1 - downloading attachments ...")
         download_attachments(session, notices, out_dir)
 

@@ -23,6 +23,7 @@ import os
 import re
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -34,7 +35,7 @@ MIN_INTERVAL = 7.0                # seconds between calls (free tier: ~10 req/mi
 _last_call = 0.0
 
 SYSTEM_PROMPT = """You rewrite university notices for students of the Faculty of Technology, University of Ruhuna (TECMIS system).
-You receive a raw scraped notice title (may contain junk like "Download" or merged dates) and, sometimes, the attached PDF document.
+You receive a raw scraped notice title (may contain junk like "Download" or merged dates) and, when available, the notice text and/or the attached PDF document.
 
 Return ONLY a JSON object with these keys:
 {
@@ -49,15 +50,15 @@ Return ONLY a JSON object with these keys:
 
 Rules:
 - key_points: 0-6 items; important_dates: 0-6 items. Only facts present in the input.
-- Never invent facts, dates, venues, or deadlines. If no document is attached, base everything on the title only and keep key_points/important_dates empty unless obvious from the title.
+- Never invent facts, dates, venues, or deadlines. If neither notice text nor a document is provided, base everything on the title only and keep key_points/important_dates empty unless obvious from the title.
 - Expand abbreviations where clear: ICT, ET (Engineering Technology), BST (Biosystems Technology).
 - For timetables/result sheets, summarise the scope (levels, semesters, date range) instead of listing every row.
 - Be concise. No markdown inside JSON values."""
 
 
 def _clean_posted_at(raw: str) -> str:
-    """Scraped posted_at is often 'YYYY-MM-DD/HH:MMTITLE...'. Extract the timestamp."""
-    m = re.search(r"(\d{4}-\d{2}-\d{2})/(\d{2}:\d{2})", raw or "")
+    """Normalise posted_at ('YYYY-MM-DD HH:MM', or old 'YYYY-MM-DD/HH:MMjunk')."""
+    m = re.search(r"(\d{4}-\d{2}-\d{2})[/ ](\d{2}:\d{2})", raw or "")
     return f"{m.group(1)} {m.group(2)}" if m else (raw or "").strip()
 
 
@@ -145,7 +146,8 @@ def enhance_notice(notice: dict, file_path: Path | None = None) -> dict | None:
         f"Posted: {_clean_posted_at(notice.get('posted_at', ''))}\n"
         f"Section: {notice.get('section', '')}\n"
         f"Attachment filename: {notice.get('file') or 'none'}\n"
-        f"Document: {'attached PDF' if pdf else '(not available)'}"
+        f"Document: {'attached PDF' if pdf else '(not available)'}\n\n"
+        f"Notice text:\n{(notice.get('content') or '(not available)')[:8000]}"
     )
     parts = ([pdf] if pdf else []) + [{"text": prompt}]
 
@@ -167,6 +169,19 @@ def _as_list(value) -> list[str]:
     return []
 
 
+def _links_md(notice: dict, document_url: str) -> str:
+    """Markdown links: main document / TECMIS page, plus links inside the notice."""
+    out = []
+    if document_url:
+        label = "View on TECMIS (login required)" if "noticeid=" in document_url else "View/Download Original"
+        out.append(f"[📄 {label}]({document_url})")
+    for link in notice.get("links") or []:
+        if link != document_url:
+            name = link.rstrip("/").rsplit("/", 1)[-1] or link
+            out.append(f"[🔗 {urllib.parse.unquote(name)}]({link.replace(' ', '%20')})")
+    return "\n\n".join(out)
+
+
 def build_body(notice: dict, document_url: str, ai: dict | None) -> tuple[str, str]:
     """Return (title, markdown_body). Uses AI output when available."""
     raw_title = notice.get("title", "").replace("Download", "").strip()
@@ -177,9 +192,10 @@ def build_body(notice: dict, document_url: str, ai: dict | None) -> tuple[str, s
         body = f"## {raw_title}\n\n"
         body += f"**Posted:** {posted}\n\n"
         body += f"**Section:** {section}\n\n"
-        if document_url:
-            body += f"[View/Download]({document_url})"
-        return raw_title, body
+        if notice.get("content"):
+            body += notice["content"].strip() + "\n\n"
+        body += _links_md(notice, document_url)
+        return raw_title, body.strip()
 
     title = str(ai.get("title") or raw_title).strip()
     category = str(ai.get("category") or "").strip()
@@ -205,8 +221,9 @@ def build_body(notice: dict, document_url: str, ai: dict | None) -> tuple[str, s
         lines += ["### Key Points"] + [f"- {p}" for p in key_points] + [""]
     if dates:
         lines += ["### Important Dates"] + [f"- {d}" for d in dates] + [""]
-    if document_url:
-        lines += [f"[📄 View/Download Original]({document_url})", ""]
+    links = _links_md(notice, document_url)
+    if links:
+        lines += [links, ""]
     lines += [f"<sub>Original title: {raw_title} · AI-enhanced summary, verify with the original notice.</sub>"]
     return title, "\n".join(lines).strip()
 

@@ -184,7 +184,7 @@ jobs:
           # unparseable date keep their reversed file position.
           import re
           def posted_key(n):
-              m = re.search(r'(\d{4}-\d{2}-\d{2})/(\d{2}:\d{2})', n.get('posted_at', ''))
+              m = re.search(r'(\d{4}-\d{2}-\d{2})[/ ](\d{2}:\d{2})', n.get('posted_at', ''))
               return f"{m.group(1)} {m.group(2)}" if m else ''
           new_notices.reverse()
           if all(posted_key(n) for n in new_notices):
@@ -198,15 +198,25 @@ jobs:
           attachments_dir.mkdir(parents=True, exist_ok=True)
           
           downloaded_files = []
-          
-          for notice in new_notices:
+
+          DOC_EXTS = ('.pdf', '.doc', '.docx', '.xls', '.xlsx')
+          def attachment_for(notice):
+              """(url, filename) of the notice's document, or (None, None).
+              File notices link the document directly; text notices may link
+              one inside their body (notice['links'])."""
               url = notice.get('url', '')
-              if not url or 'noticeid=' in url:  # Skip if no URL or if it's a notice page link
-                  continue
-              
-              # Check if it's a PDF or document
-              if any(ext in url.lower() for ext in ['.pdf', '.doc', '.docx', '.xls', '.xlsx']):
-                  filename = notice.get('file')
+              path = urllib.parse.unquote(urllib.parse.urlsplit(url).path)
+              if notice.get('file') and 'noticeid=' not in url and path.lower().endswith(DOC_EXTS):
+                  return url, notice['file']
+              for link in notice.get('links') or []:
+                  lpath = urllib.parse.unquote(urllib.parse.urlsplit(link).path)
+                  if lpath.lower().endswith(DOC_EXTS):
+                      return link, Path(lpath).name
+              return None, None
+
+          for notice in new_notices:
+              url, filename = attachment_for(notice)
+              if url:
                   if filename:
                       file_path = attachments_dir / filename
                       
@@ -261,7 +271,7 @@ jobs:
               
               # Determine the URL to use
               document_url = notice.get('url', '')
-              filename = notice.get('file')
+              _, filename = attachment_for(notice)
               file_path = attachments_dir / filename if filename else None
 
               # If we have a file, use GitHub raw URL instead of TECMIS URL
