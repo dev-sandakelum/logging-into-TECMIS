@@ -2,19 +2,23 @@
 
 Notices scraped from the [TECMIS NOTICE page](https://paravi.ruh.ac.lk/tecmis/forms/form_53_a.php) — Faculty of Technology, University of Ruhuna.
 
-Latest notice: **2026-11-17 17:26** — 57 notices total (7 recent · 50 previous).
+Latest notice: **2026-11-18 12:22** — 61 notices total (11 recent · 50 previous).
 
 ## Most Recent Notices
 
 | # | Posted | Title | Attachment |
 |---|--------|-------|------------|
-| 1 | 2026-11-17 17:26 | CHANGE OF EXAMINATION DATES | [Download](https://paravi.ruh.ac.lk/tecmis/forms/form_53_a.php?taskf=incl&noticeid=3198) |
-| 2 | 2026-11-17 15:40 | AMENDED RESULTS - ICT LEVEL 2 SEMESTER I (JUNE/JULY 2026) | [Download](https://paravi.ruh.ac.lk/tecmis/downloads/Notices/261117154047-Amanded Results - TG-2022-1360-11112026113103.pdf) |
-| 3 | 2026-11-17 15:38 | AMENDED EXAMINATION RESULTS - ET LEVEL 4 SEMESTER I (JUNE/JULY 2026) | [Download](https://paravi.ruh.ac.lk/tecmis/downloads/Notices/261117153819-Amanded ET Results L 4 S I-11112026112758.pdf) |
-| 4 | 2026-11-16 09:18 | CALLING HOSTEL APPLICATIONS | [Download](https://paravi.ruh.ac.lk/tecmis/downloads/Notices/261116091822-notice 2.pdf) |
-| 5 | 2026-11-11 10:51 | AMENDED ICT EXAM TIME TABLE | [Download](https://paravi.ruh.ac.lk/tecmis/downloads/Notices/261111105101-ICT - Exam Timetable.pdf) |
-| 6 | 2026-11-11 10:51 | AMENDED ET EXAM TIME TABLE | [Download](https://paravi.ruh.ac.lk/tecmis/downloads/Notices/261111105117-ET - Exam Timetable.pdf) |
-| 7 | 2026-11-11 10:50 | AMENDED BST EXAM TIME TABLE | [Download](https://paravi.ruh.ac.lk/tecmis/downloads/Notices/261111105042-BST - Exam Timetable.pdf) |
+| 1 | 2026-11-18 12:22 | ICT REPEAT OVERALL RESULTS - 2026 | [Download](https://paravi.ruh.ac.lk/tecmis/downloads/Notices/261118122200-ICT - Repeat Overall 11112026112645.pdf) |
+| 2 | 2026-11-18 12:21 | ET REPEAT OVERALL RESULTS - 2026 | [Download](https://paravi.ruh.ac.lk/tecmis/downloads/Notices/261118122126-ET - Repeat Overall 11112026112554.pdf) |
+| 3 | 2026-11-18 12:18 | AMENDED EXAMINATION RESULTS - ET LEVEL1 SEEMSTER II (JUNE/JULY 2026) | [Download](https://paravi.ruh.ac.lk/tecmis/downloads/Notices/261118121831-Amanded Results - TG-2024-2191.pdf) |
+| 4 | 2026-11-18 12:06 | AMENDED EXAMINATION RESULTS - ET LEVEL 1 SEMESTER I - JUN/JUL 2025 | [Download](https://paravi.ruh.ac.lk/tecmis/downloads/Notices/261118120636-Amanded Results - TG-2022-1467_rotated.pdf) |
+| 5 | 2026-11-17 17:26 | CHANGE OF EXAMINATION DATES | [Download](https://paravi.ruh.ac.lk/tecmis/forms/form_53_a.php?taskf=incl&noticeid=3198) |
+| 6 | 2026-11-17 15:40 | AMENDED RESULTS - ICT LEVEL 2 SEMESTER I (JUNE/JULY 2026) | [Download](https://paravi.ruh.ac.lk/tecmis/downloads/Notices/261117154047-Amanded Results - TG-2022-1360-11112026113103.pdf) |
+| 7 | 2026-11-17 15:38 | AMENDED EXAMINATION RESULTS - ET LEVEL 4 SEMESTER I (JUNE/JULY 2026) | [Download](https://paravi.ruh.ac.lk/tecmis/downloads/Notices/261117153819-Amanded ET Results L 4 S I-11112026112758.pdf) |
+| 8 | 2026-11-16 09:18 | CALLING HOSTEL APPLICATIONS | [Download](https://paravi.ruh.ac.lk/tecmis/downloads/Notices/261116091822-notice 2.pdf) |
+| 9 | 2026-11-11 10:51 | AMENDED ICT EXAM TIME TABLE | [Download](https://paravi.ruh.ac.lk/tecmis/downloads/Notices/261111105101-ICT - Exam Timetable.pdf) |
+| 10 | 2026-11-11 10:51 | AMENDED ET EXAM TIME TABLE | [Download](https://paravi.ruh.ac.lk/tecmis/downloads/Notices/261111105117-ET - Exam Timetable.pdf) |
+| 11 | 2026-11-11 10:50 | AMENDED BST EXAM TIME TABLE | [Download](https://paravi.ruh.ac.lk/tecmis/downloads/Notices/261111105042-BST - Exam Timetable.pdf) |
 
 ## Previous Notices
 
