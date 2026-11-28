@@ -2,16 +2,17 @@
 
 Notices scraped from the [TECMIS NOTICE page](https://paravi.ruh.ac.lk/tecmis/forms/form_53_a.php) — Faculty of Technology, University of Ruhuna.
 
-Latest notice: **2026-11-25 12:09** — 54 notices total (4 recent · 50 previous).
+Latest notice: **2026-11-28 00:20** — 55 notices total (5 recent · 50 previous).
 
 ## Most Recent Notices
 
 | # | Posted | Title | Attachment |
 |---|--------|-------|------------|
-| 1 | 2026-11-25 12:09 | AMENDED ET EXAM TIME TABLE - 2026 NOV/DEC | [Download](https://paravi.ruh.ac.lk/tecmis/downloads/Notices/261125120924-Amended BST Exam Timetable - Nov Dec 2026.pdf) |
-| 2 | 2026-11-25 12:08 | AMENDED ICT EXAM TIME TABLE - 2026 NOV/DEC | [Download](https://paravi.ruh.ac.lk/tecmis/downloads/Notices/261125120814-Amended ICT Exam Timetable - Nov Dec 2026.pdf) |
-| 3 | 2026-11-25 12:08 | AMENDED BST EXAM TIME TABLE - 2026 NOV/DEC | [Download](https://paravi.ruh.ac.lk/tecmis/downloads/Notices/261125120847-Amended BST Exam Timetable - Nov Dec 2026.pdf) |
-| 4 | 2026-11-23 16:02 | RESCHEDULING OF EXAMINATION SCHEDULED FOR 25 NOVEMBER 2026 | [Download](https://paravi.ruh.ac.lk/tecmis/forms/form_53_a.php?taskf=incl&noticeid=3203) |
+| 1 | 2026-11-28 00:20 | AMENDED EXAMINATION SCHEDULE | [Download](https://paravi.ruh.ac.lk/tecmis/forms/form_53_a.php?taskf=incl&noticeid=3207) |
+| 2 | 2026-11-25 12:09 | AMENDED ET EXAM TIME TABLE - 2026 NOV/DEC | [Download](https://paravi.ruh.ac.lk/tecmis/downloads/Notices/261125120924-Amended BST Exam Timetable - Nov Dec 2026.pdf) |
+| 3 | 2026-11-25 12:08 | AMENDED ICT EXAM TIME TABLE - 2026 NOV/DEC | [Download](https://paravi.ruh.ac.lk/tecmis/downloads/Notices/261125120814-Amended ICT Exam Timetable - Nov Dec 2026.pdf) |
+| 4 | 2026-11-25 12:08 | AMENDED BST EXAM TIME TABLE - 2026 NOV/DEC | [Download](https://paravi.ruh.ac.lk/tecmis/downloads/Notices/261125120847-Amended BST Exam Timetable - Nov Dec 2026.pdf) |
+| 5 | 2026-11-23 16:02 | RESCHEDULING OF EXAMINATION SCHEDULED FOR 25 NOVEMBER 2026 | [Download](https://paravi.ruh.ac.lk/tecmis/forms/form_53_a.php?taskf=incl&noticeid=3203) |
 
 ## Previous Notices
 
